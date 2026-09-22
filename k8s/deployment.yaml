@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ariba-crd-mcp-server
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ariba-crd-mcp-server
+  template:
+    metadata:
+      labels:
+        app: ariba-crd-mcp-server
+    spec:
+      containers:
+      - name: ariba-crd-mcp-server
+        image: ghcr.io/i518852/skills:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3000
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ariba-crd-mcp-server
+  namespace: default
+spec:
+  selector:
+    app: ariba-crd-mcp-server
+  ports:
+  - port: 3000
+    targetPort: 3000
+---
+apiVersion: gateway.kyma-project.io/v1beta1
+kind: APIRule
+metadata:
+  name: ariba-crd-mcp-server
+  namespace: default
+spec:
+  host: ariba-crd-mcp-server.c-55cc5d0.stage.kyma.ondemand.com
+  service:
+    name: ariba-crd-mcp-server
+    port: 3000
+  gateway: kyma-system/kyma-gateway
+  rules:
+  - path: /.*
+    methods: ["GET", "POST", "OPTIONS"]
+    accessStrategies:
+    - handler: noop

@@ -1,2 +1,2 @@
 # Skills
-CRD Chargeability Skill
+This skill analyses CRD chargeability
