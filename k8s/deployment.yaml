@@ -45,7 +45,7 @@ spec:
     port: 3000
   gateway: kyma-system/kyma-gateway
   rules:
-  - path: /
+  - path: /*
     methods:
     - GET
     - POST
