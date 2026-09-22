@@ -1,12 +1,46 @@
+name: Build, Push & Deploy to Kyma
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/padminis-tech/skills:latest
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
       - name: Deploy to Kyma
         run: |
-          cat <<EOF > kubeconfig.yaml
+          cat > kubeconfig.yaml << 'EOF'
           apiVersion: v1
           kind: Config
           clusters:
           - cluster:
               server: https://api.c-55cc5d0.stage.kyma.ondemand.com
-              certificate-authority-data: ${{ secrets.CA_DATA }}
+              certificate-authority-data: PLACEHOLDER_CA
             name: kyma-cluster
           contexts:
           - context:
@@ -17,8 +51,10 @@
           users:
           - name: github-actions-sa
             user:
-              token: ${{ secrets.SA_TOKEN }}
+              token: PLACEHOLDER_TOKEN
           EOF
+          sed -i "s|PLACEHOLDER_CA|${{ secrets.CA_DATA }}|g" kubeconfig.yaml
+          sed -i "s|PLACEHOLDER_TOKEN|${{ secrets.SA_TOKEN }}|g" kubeconfig.yaml
           export KUBECONFIG=kubeconfig.yaml
           kubectl apply -f k8s/deployment.yaml --validate=false
           kubectl rollout restart deployment/ariba-crd-mcp-server -n default
