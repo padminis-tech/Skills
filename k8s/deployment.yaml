@@ -8,10 +8,12 @@ spec:
   selector:
     matchLabels:
       app: ariba-crd-mcp-server
-  template:
+   template:
     metadata:
       labels:
         app: ariba-crd-mcp-server
+      annotations:
+        sidecar.istio.io/inject: "true"
     spec:
       containers:
       - name: ariba-crd-mcp-server
