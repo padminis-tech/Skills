@@ -8,7 +8,7 @@ spec:
   selector:
     matchLabels:
       app: ariba-crd-mcp-server
-   template:
+  template:
     metadata:
       labels:
         app: ariba-crd-mcp-server
