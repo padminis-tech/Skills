@@ -56,6 +56,8 @@ jobs:
           sed -i "s|PLACEHOLDER_CA|${{ secrets.CA_DATA }}|g" kubeconfig.yaml
           sed -i "s|PLACEHOLDER_TOKEN|${{ secrets.SA_TOKEN }}|g" kubeconfig.yaml
           export KUBECONFIG=kubeconfig.yaml
+          kubectl delete apirule ariba-crd-mcp-server -n default --ignore-not-found=true
           kubectl apply -f k8s/deployment.yaml --validate=false
           kubectl rollout restart deployment/ariba-crd-mcp-server -n default
+
 
