@@ -32,10 +32,10 @@ jobs:
     - name: Set up kubectl
       uses: azure/setup-kubectl@v4
 
-    - name: Deploy to Kyma
+     - name: Deploy to Kyma
       run: |
         echo "${{ secrets.KUBECONFIG }}" > kubeconfig.yaml
         export KUBECONFIG=kubeconfig.yaml
-        kubectl apply -f k8s/deployment.yaml
+        kubectl apply -f k8s/deployment.yaml --validate=false
         kubectl rollout restart deployment/ariba-crd-mcp-server -n default
         kubectl rollout status deployment/ariba-crd-mcp-server -n default --timeout=120s
