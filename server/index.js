@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 3000;
 
 function loadSkill() {
   try {
-    const skillPath = join(__dirname, '..', 'skills', 'ariba-crd-chargeability', 'SKILL.md');
+    const skillPath = join(__dirname, 'SKILL.md');
     const content = readFileSync(skillPath, 'utf-8');
     const frontmatter = content.match(/^---\n([\s\S]*?)\n---/);
     let version = '1.0.0';
