@@ -3,6 +3,6 @@ WORKDIR /app
 COPY server/package.json ./
 RUN npm install --production
 COPY server/index.js ./
-COPY skills/ ./skills/
+COPY SKILL.md ./SKILL.md
 EXPOSE 3000
 CMD ["node", "index.js"]
