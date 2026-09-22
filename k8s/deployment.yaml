@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: ariba-crd-mcp-server
-        image: ghcr.io/i518852/skills:latest
+        image: ghcr.io/padminis-tech/skills:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 3000
