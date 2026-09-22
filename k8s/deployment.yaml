@@ -51,7 +51,7 @@ spec:
     name: ariba-crd-mcp-server
     port: 3000
   gateway: kyma-system/kyma-gateway
-  rules:
-  - path: /.*
+    rules:
+  - path: /{**}
     methods: ["GET", "POST", "OPTIONS"]
     noAuth: true
