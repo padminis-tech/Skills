@@ -58,4 +58,5 @@ jobs:
           export KUBECONFIG=kubeconfig.yaml
           kubectl apply -f k8s/deployment.yaml --validate=false
           kubectl rollout restart deployment/ariba-crd-mcp-server -n default
-          kubectl rollout status deployment/ariba-crd-mcp-server -n default --timeout=120s
+          kubectl rollout status deployment/ariba-crd-mcp-server -n default --timeout=300s
+
