@@ -1,201 +1,196 @@
-"""export_excel.py
-Usage: python export_excel.py <results_json> <source_excel> <output_filename>
-  results_json     Path to crd_results.json
-  source_excel     Path to the original SAP Ariba CRD Excel tracker
-  output_filename  Desired output filename (auto-increments if file is locked)
-Embeds Tool Assessment, Tool Reason, and Scope columns into the CRD Overview sheet.
-Handles all known overview sheet names: 'CRD_Overview', 'CRD Overview', 'Overview'.
-Handles both old format IDs ('CRD-01') and new consolidated format IDs
-('Contracts Tab - C1', 'Sourcing Tab - S2', etc.) by normalizing before lookup.
-Section header and column headers use white font (inheriting source fill).
-Data rows use plain black non-underlined text.
-v4.8.2: Reverted to source-file fill for section/column headers; font forced WHITE
-  so text is visible on any dark background without overriding the fill.
 """
-import openpyxl
-import openpyxl.styles
-from openpyxl.styles import Font, Color
-import copy
+export_excel.py  —  CRD Chargeability Skill  (scripts/)
+--------------------------------------------------------
+Embeds Tool Assessment, Tool Reason, and Scope columns into the
+CRD_Overview sheet of the original CRD Excel file.
+
+Usage (called by the skill):
+    python export_excel.py <results_json> <source_xlsx> <output_xlsx>
+
+Column layout written (3 columns only):
+    ┌──────────────────────────────────────────────────────────────────────┐
+    │  Tool Generated Chargeability & Feasibility  (section banner row)   │
+    ├─────────────────────────┬───────────────────────────────┬───────────┤
+    │  Tool Assessment        │  Tool Reason                  │  Scope    │
+    ├─────────────────────────┼───────────────────────────────┼───────────┤
+    │  Chargeable: X |        │  <rule explanation>           │  Down-    │
+    │  Feasibility: Yes |     │                               │  stream   │
+    │  Complexity: Straight…  │                               │           │
+    └─────────────────────────┴───────────────────────────────┴───────────┘
+
+Styling:
+  • Section banner  : black fill (#000000), white bold text, left-aligned
+  • Column headers  : black fill (#000000), white bold text, left-aligned
+  • Data cells      : copied fill + font from adjacent row cells (matches template)
+"""
+
+import sys
 import json
 import os
-import re
-import sys
+import openpyxl
+from copy import copy
+from openpyxl.styles import PatternFill, Font, Alignment, NamedStyle
+from openpyxl.utils import get_column_letter
 
-results_path = sys.argv[1]
-excel_path = sys.argv[2]
-output_filename = sys.argv[3] if len(sys.argv) > 3 else 'CRD_Tool_Assessment.xlsx'
+# ── Styling constants ──────────────────────────────────────────────────────────
+# patternType (not fill_type) + full 8-char hex + bgColor for maximum Excel compatibility
+BLACK_FILL  = PatternFill(patternType="solid", fgColor="FF000000", bgColor="FF000000")
+WHITE_BOLD  = Font(bold=True, color="FFFFFFFF", name="Arial", size=10)
+DATA_FONT   = Font(name="Arial", size=10)
+ALIGN_LEFT  = Alignment(horizontal="left", vertical="center", wrap_text=False)
+ALIGN_WRAP  = Alignment(horizontal="left", vertical="top",    wrap_text=True)
 
-# Auto-increment output filename if locked
-base, ext = os.path.splitext(output_filename)
-candidate = output_filename
-for i in range(2, 20):
-    try:
-        f = open(candidate, 'ab')
-        f.close()
-        break
-    except PermissionError:
-        candidate = f"{base}_v{i}{ext}"
-output_filename = candidate
+# NamedStyle for black header cells — registering in the workbook's style XML
+# guarantees the fill is persisted even when row-level styles are present.
+_STYLE_NAME = "CRD_BlackHeader_Tool"
 
-with open(results_path, 'r', encoding='utf-8') as f:
-    results = json.load(f)
+# Column headers (exact 3 — no confidence columns)
+HEADERS    = ["Tool Assessment", "Tool Reason", "Scope"]
+COL_WIDTHS = [40, 90, 20]   # approximate character widths
 
-wb = openpyxl.load_workbook(excel_path)
-
-# Support all known overview sheet name variants (old and new format)
-overview_name = next(
-    (n for n in ['CRD_Overview', 'CRD Overview', 'Overview'] if n in wb.sheetnames),
-    None
-)
-if not overview_name:
-    print('ERROR: CRD Overview sheet not found')
-    sys.exit(1)
-ws = wb[overview_name]
-
-# ---------------------------------------------------------------------------
-# ID normalizer: maps Overview cell values to extraction script IDs
-# Old format:  'CRD-01'              -> 'CRD-01'  (unchanged)
-# New format:  'Contracts Tab - C1'  -> 'C-1'
-#              'Sourcing Tab - S2'   -> 'S-2'
-#              'SPM Tab - SPM1'      -> 'SPM-1'
-#              'Forms Tab - F1'      -> 'F-1'
-#              'Savings Tab - SF1'   -> 'SF-1'
-# ---------------------------------------------------------------------------
-def normalize_crd_id(raw):
-    if not raw:
-        return None
-    s = str(raw).strip()
-    if ' - ' in s:
-        s = s.split(' - ')[-1].strip()
-    s = re.sub(r'^([A-Za-z]+)(\d+)$', r'\1-\2', s)
-    return s
+# Overview sheet name (handles both underscore and space variants)
+OVERVIEW_VARIANTS = ["CRD_Overview", "CRD Overview", "CRD_OVERVIEW", "CRD OVERVIEW"]
 
 
-# ---------------------------------------------------------------------------
-# Style helpers
-#
-# copy_style_white : copies fill + border from src, forces WHITE non-underlined font.
-#                   Use for section header and column headers on dark backgrounds.
-#
-# copy_style_clean : copies fill + border from src, forces BLACK non-underlined font.
-#                   Use for data rows on light/white backgrounds.
-# ---------------------------------------------------------------------------
-def copy_style_white(src, dst):
-    """Copy fill, border from src but always write bold white non-underlined font.
-    Designed for header rows that have a dark background fill.
+def find_overview_sheet(wb):
+    for name in OVERVIEW_VARIANTS:
+        if name in wb.sheetnames:
+            return wb[name]
+    # Fallback: first sheet containing 'overview' (case-insensitive)
+    for name in wb.sheetnames:
+        if "overview" in name.lower():
+            return wb[name]
+    raise ValueError(
+        "Cannot find CRD Overview sheet. Expected one of: {}. "
+        "Found: {}".format(OVERVIEW_VARIANTS, wb.sheetnames)
+    )
+
+
+def find_header_row(ws):
     """
-    if src.has_style:
-        src_font = src.font
-        dst.font = Font(
-            name=src_font.name,
-            size=src_font.size,
-            bold=src_font.bold,
-            italic=src_font.italic,
-            underline=None,
-            color=Color(rgb='FFFFFFFF'),  # always white text
-        )
-        dst.fill = copy.copy(src.fill)
-        dst.border = copy.copy(src.border)
-
-
-def copy_style_clean(src, dst):
-    """Copy fill, border from src but always write plain black non-underlined font.
-    Designed for data rows on light/white backgrounds.
+    Locate the row that contains 'CRD no.' or 'CRD No.' in column A/B.
+    Defaults to row 6 if not found (standard Ariba CRD template).
     """
-    if src.has_style:
-        src_font = src.font
-        dst.font = Font(
-            name=src_font.name,
-            size=src_font.size,
-            bold=src_font.bold,
-            italic=src_font.italic,
-            underline=None,
-            color=Color(rgb='FF000000'),  # always black text
+    for row in ws.iter_rows(min_row=1, max_row=20):
+        for cell in row[:3]:
+            if cell.value and "crd" in str(cell.value).lower() and "no" in str(cell.value).lower():
+                return cell.row
+    return 6
+
+
+def build_tool_assessment(r):
+    return "Chargeable: {} | Feasibility: {} | Complexity: {}".format(
+        r.get("chargeable", ""),
+        r.get("technically_feasible", ""),
+        r.get("complexity", ""),
+    )
+
+
+def _ensure_named_style(wb):
+    """Register the black-header NamedStyle once on the workbook."""
+    if _STYLE_NAME not in wb.named_styles:
+        ns           = NamedStyle(name=_STYLE_NAME)
+        ns.fill      = PatternFill(patternType="solid", fgColor="FF000000", bgColor="FF000000")
+        ns.font      = Font(bold=True, color="FFFFFFFF", name="Arial", size=10)
+        ns.alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
+        wb.add_named_style(ns)
+
+
+def _apply_black(cell):
+    """Apply black fill + white bold font directly to a cell (belt-and-suspenders)."""
+    cell.fill      = PatternFill(patternType="solid", fgColor="FF000000", bgColor="FF000000")
+    cell.font      = Font(bold=True, color="FFFFFFFF", name="Arial", size=10)
+    cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
+
+
+def write_tool_assessment(ws, results, header_row):
+    result_map = {r["crd_no"]: r for r in results}
+    start_col  = ws.max_column + 1
+    banner_row = header_row - 1   # one row above the column headers
+
+    # Register NamedStyle on the parent workbook
+    _ensure_named_style(ws.parent)
+
+    # ── Rows 1 → (banner_row-1): extend existing black top-section background ──
+    # The CRD_Overview header rows are black in the original template.
+    # New columns appended after max_column don't inherit that fill, so
+    # we explicitly black-fill every cell in those rows for each new column.
+    for fill_row in range(1, banner_row):
+        for offset in range(len(HEADERS)):
+            _apply_black(ws.cell(row=fill_row, column=start_col + offset))
+
+    # ── Banner row ────────────────────────────────────────────────────────────
+    banner_cell       = ws.cell(row=banner_row, column=start_col)
+    banner_cell.value = "Tool Generated Chargeability & Feasibility"
+    _apply_black(banner_cell)
+    for offset in range(1, len(HEADERS)):
+        _apply_black(ws.cell(row=banner_row, column=start_col + offset))
+
+    # ── Column header row ─────────────────────────────────────────────────────
+    for i, header in enumerate(HEADERS):
+        col = start_col + i
+        c   = ws.cell(row=header_row, column=col, value=header)
+        _apply_black(c)
+        ws.column_dimensions[get_column_letter(col)].width = COL_WIDTHS[i]
+
+    # ── Data rows ─────────────────────────────────────────────────────────────
+    for row in ws.iter_rows(min_row=header_row + 1, max_row=ws.max_row):
+        first_cell = row[0]
+        if not (first_cell.value and str(first_cell.value).strip().upper().startswith("CRD")):
+            continue
+        crd_no = str(first_cell.value).strip()
+        if crd_no not in result_map:
+            continue
+
+        r       = result_map[crd_no]
+        row_num = first_cell.row
+
+        # Copy fill and font from the first existing cell in this row so the
+        # new columns match the existing row background and text style exactly.
+        ref_fill = copy(first_cell.fill)
+        ref_font = first_cell.font
+        row_font = Font(
+            bold  = False,
+            size  = ref_font.size if ref_font.size else 9,
+            name  = ref_font.name if ref_font.name else "Arial",
+            color = ref_font.color,
         )
-        dst.fill = copy.copy(src.fill)
-        dst.border = copy.copy(src.border)
+
+        c_assess = ws.cell(row=row_num, column=start_col,     value=build_tool_assessment(r))
+        c_reason = ws.cell(row=row_num, column=start_col + 1, value=r.get("reason", ""))
+        c_scope  = ws.cell(row=row_num, column=start_col + 2, value=r.get("scope",  ""))
+
+        for c, align in [(c_assess, ALIGN_WRAP), (c_reason, ALIGN_WRAP), (c_scope, ALIGN_LEFT)]:
+            c.fill      = ref_fill
+            c.font      = row_font
+            c.alignment = align
 
 
-# Detect header row: look for a row containing 'CRD' and 'no' (case-insensitive)
-HEADER_ROW = 6  # default
-for i, row in enumerate(ws.iter_rows(max_row=15, values_only=True), 1):
-    if any(row) and row[0] and 'crd' in str(row[0]).lower() and 'no' in str(row[0]).lower():
-        HEADER_ROW = i
-        break
-DATA_START = HEADER_ROW + 1
+def main():
+    if len(sys.argv) < 4:
+        print("Usage: export_excel.py <results_json> <source_xlsx> <output_xlsx>")
+        sys.exit(1)
 
-# Find last used column in header row
-last_col = 1
-for cell in ws[HEADER_ROW]:
-    if cell.value is not None:
-        last_col = cell.column
+    results_path = sys.argv[1]
+    source_path  = sys.argv[2]
+    output_path  = sys.argv[3]
 
-tool_col_1 = last_col + 1  # Tool Assessment
-tool_col_2 = last_col + 2  # Tool Reason
-tool_col_3 = last_col + 3  # Scope
+    # Resolve output path: if only a filename is given, place in cwd
+    if not os.path.isabs(output_path):
+        output_path = os.path.join(os.getcwd(), output_path)
 
-def unmerge_overlap(ws, min_c, max_c, min_r=None, max_r=None):
-    to_unmerge = []
-    for mr in ws.merged_cells.ranges:
-        col_overlap = mr.min_col <= max_c and mr.max_col >= min_c
-        row_overlap = (min_r is None) or (mr.min_row <= max_r and mr.max_row >= min_r)
-        if col_overlap and row_overlap:
-            to_unmerge.append(str(mr))
-    for r in to_unmerge:
-        ws.unmerge_cells(r)
+    with open(results_path, "r", encoding="utf-8") as f:
+        results = json.load(f)
 
-# Unmerge anything overlapping new columns globally
-unmerge_overlap(ws, tool_col_1, tool_col_3)
+    wb         = openpyxl.load_workbook(source_path)
+    ws         = find_overview_sheet(wb)
+    header_row = find_header_row(ws)
 
-ref_header = ws.cell(row=HEADER_ROW, column=last_col)
+    write_tool_assessment(ws, results, header_row)
 
-# Group header row above column headers
-# Inherits source fill; font is forced WHITE so it is visible on any dark background.
-group_row = HEADER_ROW - 1
-if group_row >= 1:
-    gc = ws.cell(row=group_row, column=tool_col_1)
-    gc.value = 'Tool Generated Chargeability & Feasibility'
-    copy_style_white(ref_header, gc)
-    try:
-        ws.merge_cells(start_row=group_row, start_column=tool_col_1,
-                       end_row=group_row, end_column=tool_col_3)
-    except Exception:
-        pass
+    wb.save(output_path)
+    print("Excel saved: {}".format(output_path))
 
-# Column headers — white font (same dark background as section header)
-for col, label in [(tool_col_1, 'Tool Assessment'), (tool_col_2, 'Tool Reason'), (tool_col_3, 'Scope')]:
-    cell = ws.cell(row=HEADER_ROW, column=col)
-    cell.value = label
-    copy_style_white(ref_header, cell)
 
-# Build results map keyed by CRD ID
-results_map = {str(r['crd_no']): r for r in results}
-
-# Data rows — black font on source data-row background
-for row_idx in range(DATA_START, DATA_START + 300):
-    crd_no_raw = ws.cell(row=row_idx, column=1).value
-    if not crd_no_raw:
-        continue
-
-    normalized = normalize_crd_id(crd_no_raw)
-    r = results_map.get(normalized) or results_map.get(str(crd_no_raw).strip())
-    if not r:
-        continue
-
-    ref_data = ws.cell(row=row_idx, column=1)
-    unmerge_overlap(ws, tool_col_1, tool_col_3, row_idx, row_idx)
-
-    assessment = f"Chargeable: {r['chargeable']} | Feasibility: {r['technically_feasible']} | Complexity: {r['complexity']}"
-    scope = r.get('scope', 'Downstream')
-    for col, value in [(tool_col_1, assessment), (tool_col_2, r['reason']), (tool_col_3, scope)]:
-        cell = ws.cell(row=row_idx, column=col)
-        cell.value = value
-        copy_style_clean(ref_data, cell)
-        cell.alignment = openpyxl.styles.Alignment(wrap_text=True, vertical='top')
-
-ws.column_dimensions[openpyxl.utils.get_column_letter(tool_col_1)].width = 40
-ws.column_dimensions[openpyxl.utils.get_column_letter(tool_col_2)].width = 70
-ws.column_dimensions[openpyxl.utils.get_column_letter(tool_col_3)].width = 15
-
-wb.save(output_filename)
-print(f'Saved: {output_filename}')
+if __name__ == "__main__":
+    main()
