@@ -5,7 +5,7 @@ description: >-
 allowed-tools: execute write_file read_file render_ui
 metadata:
   author: Ariba Technology Consultant
-  version: 4.9.0
+  version: 4.9.1
   tags: ariba crd chargeability custom-fields buying-invoicing procurement feasibility complexity ariba-network an
 ---
 
@@ -31,10 +31,15 @@ Activate when the user:
 
 ## Step -1 — Bootstrap (MANDATORY — Run Before All Other Steps)
 
-> **Every time this skill activates, write all scripts and reference files to scratch first.**
-> This makes the connector fully self-contained — no local skill files are needed on any user's machine.
+> **Version-aware cache — run this check BEFORE writing any files.**
 >
-> Emit all six `write_file` calls in a **single parallel turn**, then wait for all to complete before proceeding to Step 0.
+> 1. `read_file` → `<scratch>/bootstrap_version.txt` (if file is missing, treat cached version as `none`)
+> 2. Compare cached version against this skill's version: **`4.9.1`**
+> 3. **Versions match** → skip all six `write_file` calls entirely. Proceed directly to Step 0.
+> 4. **Versions differ or file missing** → write all six files (parallel turn below), then write `4.9.1` to `<scratch>/bootstrap_version.txt`.
+>
+> This ensures scripts and reference files are only re-written when the skill version changes — not on every run.
+> Emit all six `write_file` calls in a **single parallel turn**, then wait for all to complete before writing the version file.
 
 ---
 
@@ -1408,7 +1413,8 @@ After determining the base chargeable count, apply the realm multiplier.
 
 ### Section B - Ariba Network (AN) Rules
 
-> Full rule reference: `<scratch>/an-chargeability-rules.md`
+> **Lazy load — only when scope is AN.** `read_file` → `<scratch>/an-chargeability-rules.md`
+> Do NOT load this file for Downstream or Upstream runs.
 
 **NOT CUSTOMIZABLE GATE — Run BEFORE any rule scoring. Do not skip.**
 
@@ -1473,7 +1479,8 @@ Assign `chargeability_confidence` (0-100) using the same scale and criteria as D
 
 ### Section C - Upstream Rules (SAP Ariba Sourcing)
 
-> Full rule reference: `<scratch>/upstream-chargeability-rules.md`
+> **Lazy load — only when scope is Upstream.** `read_file` → `<scratch>/upstream-chargeability-rules.md`
+> Do NOT load this file for Downstream or AN runs.
 
 **Key principle: 1 field = 1 customization** regardless of the number of changes made to that field.
 
